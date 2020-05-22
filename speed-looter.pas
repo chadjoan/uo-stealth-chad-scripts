@@ -27,6 +27,7 @@ Program SpeedLooter;
 uses
 	//SpeedLooterLib,
 	viking_file_io,
+	viking_geometry,
 	viking_types,
 	viking_testing,
 	viking_utf,
@@ -79,47 +80,26 @@ const
 	EC_ESCAPED      = 4;
 	EC_INTERRUPTED  = 5;
 
-// Abs function that doesn't return a berping floating point number.
-function absI32(n : Integer) : Integer;
-begin
-	if n < 0 then
-    	Result := -n
-    else
-    	Result := n;
-end;
-
-function distanceChebyshev(x1, y1, x2, y2 : Integer) : Integer;
+function container_distance(_contId : Cardinal) : uint32;
 var
-	adx, ady : Integer;
-begin
-	adx := absI32(x2-x1);
-	ady := absI32(y2-y1);
-	if adx > ady then
-		Result := adx
-	else
-		Result := ady
-end;
-
-function containerDistance(_contId : Cardinal) : Integer;
-var
-	pX, pY       : Integer;
-	contX, contY : Integer;
+	pX, pY       : int32;
+	contX, contY : int32;
 begin
 	pX := GetX(Self);
 	pY := GetY(Self);
 	contX := GetX(_contId);
 	contY := GetY(_contId);
-	Result := distanceChebyshev(pX, pY, contX, contY);
+	Result := distance_chebyshev_i32(pX, pY, contX, contY);
 end;
 
 function distanceOK(_contId : Cardinal) : Boolean;
 begin
-	Result := (containerDistance(_contId) <= armLength);
+	Result := (container_distance(_contId) <= armLength);
 end;
 
-procedure waitForOkayDistance(_contId : Cardinal; _t0 : Int64);
+procedure waitForOkayDistance(_contId : Cardinal; _t0 : int64);
 var
-	dist     : Integer;
+	dist     : uint32;
 	tOther   : Int64;
 	globuff  : String;
 begin
@@ -129,7 +109,7 @@ begin
 	begin
 		Wait(distanceCheckPollInterval);
 
-		dist := containerDistance(_contId);
+		dist := container_distance(_contId);
 		if dist <= armLength then
 			Break;
 
@@ -169,44 +149,9 @@ begin
 	SetGlobal('char', 'SpeedLooter_LastActionTick', IntToStr(GetTickCount()));
 end;
 
-function OpenForAppending(_path: String) : TFileStream;
+function padLeft(_text, _fillWith : String; _desiredWidth : size_t) : String;
 var
-	fd   : TFileStream;
-	mode : Word;
-begin
-	if FileExists(_path) then
-		mode := fmOpenReadWrite
-	else
-		mode := fmCreate;
-
-	fd := TFileStream.Create(_path,mode);
-	if mode = fmOpenReadWrite then
-		fd.Seek(0,soFromEnd);
-
-	Result := fd;
-end;
-
-function writeAscii(_writer : TFileStream; _text : String) : Int64;
-var
-	_ascii : AnsiString;
-begin
-	// TODO: This DOESN'T WORK. I am getting UTF-16 or something else weird
-	// when I write to a file.
-	_ascii := _text;
-	Result := _writer.Write(_ascii, length(_ascii));
-end;
-
-function writeAsciiLine(_writer : TFileStream; _line : String) : Int64;
-var
-	_ascii : AnsiString;
-begin
-	_ascii := _line + Chr(13) + Chr(10);
-	Result := _writer.Write(_ascii, length(_ascii));
-end;
-
-function padLeft(_text, _fillWith : String; _desiredWidth : Integer) : String;
-var
-	lengthToAdd : Integer;
+	lengthToAdd  : size_t;
 	nReps        : Integer;
 	whichRep     : Integer;
 	overflowLen  : Integer;
@@ -250,34 +195,34 @@ end;
 ///   rountIntToInterval(4, 9) = 0
 ///   rountIntToInterval(5, 9) = 9
 /// TODO: unittests!
-function roundIntToInterval(_val : Int64; _interval : Int64) : Int64;
+function roundIntToInterval(val_ : int64; interval_ : int64) : int64;
 var
-	halfInterval : Int64;
-	remainder    : Int64;
-	roundedDown  : Int64;
+	halfInterval : int64;
+	remainder    : int64;
+	roundedDown  : int64;
 begin
-	halfInterval := _interval div 2;
-	if (_interval mod 2) > 0 then
+	halfInterval := interval_ div 2;
+	if (interval_ mod 2) > 0 then
 		halfInterval := halfInterval + 1;
 
-	remainder := _val mod _interval;
-	roundedDown := _val - remainder;
+	remainder := val_ mod interval_;
+	roundedDown := val_ - remainder;
 	if remainder < halfInterval then
 		Result := roundedDown
 	else
-		Result := roundedDown + _interval; // Round up.
+		Result := roundedDown + interval_; // Round up.
 end;
 
 type
-	// Let's crowdsource {itemId,count,weight} correlations; because so far
+	// Let's crowdsource {itemType,count,weight} correlations; because so far
 	// I haven't found a function in the Stealth API that returns the weight
 	// of an object based on its ID (you'll have to "drag" it to find out).
 	// If we have an appreciable number of these, we could know without dragging,
 	// and thus optimize the exit time for this corner-case. (I know, eyes are rolling.) 
 	TWeightData = record
-		itemId     : Cardinal;
-		stackSize  : Integer;
-		weight     : Integer;
+		itemType   : Word;
+		stackSize  : uint32;
+		weight     : uint32;
 	end;
 
 	ArrayOfWeightData = Array of TWeightData;
@@ -285,17 +230,17 @@ type
 	TLooterContext = record
 		contId          : Cardinal;
 		lootList        : TCardinalDynArray;
-		lootCount       : Int64;
+		lootCount       : index_t;
 		weightOverride  : Boolean;
-		weightArrayLen  : Int64;
+		weightArrayLen  : index_t;
 		weightDataArray : ArrayOfWeightData;
 		success         : Boolean;
 	end;
 
 procedure printOutOfReach(const _ctx : TLooterContext);
 var
-	pX, pY       : Integer;
-	contX, contY : Integer;
+	pX, pY       : int32;
+	contX, contY : int32;
 begin
 	pX := GetX(Self);
 	pY := GetY(Self);
@@ -356,7 +301,7 @@ begin
 	// Grab a weight datapoint.
 	w1 := Weight;
 
-	weightDatum.itemId := lootId;
+	weightDatum.itemType := GetType(lootId);
 	weightDatum.stackSize := stackSize;
 	weightDatum.weight := w1-w0;
 
@@ -456,13 +401,15 @@ var
 	tStart         : Int64;
     tOther         : Int64;
     t0, t1, dt     : Int64;   // Timing calculation fodder.
-	lootIndex      : Int64;
-	weightArrayIdx : Int64;
+	lootIndex      : index_t;
+	weightArrayIdx : index_t;
 	weightDatum    : TWeightData;
 	weightFile     : TFileStream;
 	globuff        : String;
 	emsg           : String;
 	ecode          : Integer;
+	
+	//outputLine     : String;
 
 begin
 	// Stop us from trying to loot ourselves. That would /awkward/.
@@ -630,10 +577,9 @@ begin
 				for weightArrayIdx := 0 to ctx.weightArrayLen-1 do
 				begin
 					weightDatum := ctx.weightDataArray[weightArrayIdx];
-					write_utf8_line(weightFile,
-						'$'+IntToHex(weightDatum.itemId, 4)+','
-						+ IntToStr(weightDatum.stackSize)+','
-						+ IntToStr(weightDatum.weight));
+					write_utf8     (weightFile, '$'+IntToHex(weightDatum.itemType, 4));
+					write_utf8     (weightFile, ','+IntToStr(weightDatum.stackSize));
+					write_utf8_line(weightFile, ','+IntToStr(weightDatum.weight));
 				end;
 			end;
 			finally
@@ -656,7 +602,7 @@ begin
 				begin
 					weightDatum = weightDataArray[weightArrayIdx];
 					Write(weightFile, 
-						'$'+IntToHex(weightDatum.itemId, 4)+','
+						'$'+IntToHex(weightDatum.itemType, 4)+','
 						+ IntToStr(weightDatum.stackSize)+','
 						+ IntToStr(weightDatum.weight));
 				end;
