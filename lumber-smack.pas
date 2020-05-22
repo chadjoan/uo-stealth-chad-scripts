@@ -39,6 +39,7 @@ const
 	Msg8          = 'reach this';
 	MsgMustWait   = 'You must wait to perform another action.';
 	MsgTooFarAway = 'That is too far away.';
+	MsgNoLos      = 'Target cannot be seen.';
 
 	// The value to pass to FindType that makes it search all item types.
 	OPT_ALL_TYPES = -1;
@@ -340,6 +341,7 @@ var
 	NO_MORE_WOOD    : uint32;
 	WAIT_FOR_ACTION : uint32;
 	TOO_FAR_AWAY    : uint32;
+	NO_LOS          : uint32;
 
 	treeVisit     : visited_tree_rec;
 	axeItemId     : uint32;
@@ -359,6 +361,7 @@ begin
 	NO_MORE_WOOD    := $0004;
 	WAIT_FOR_ACTION := $0008;
 	TOO_FAR_AWAY    := $0010;
+	NO_LOS          := $0020;
 
 	Result := true;
 	nagInterval := 10000;
@@ -461,6 +464,9 @@ begin
 
 			if (InJournalBetweenTimes (MsgTooFarAway, timeStart, timeEnd) <> -1) then
 				flags := flags or TOO_FAR_AWAY;
+				
+			if (InJournalBetweenTimes (MsgNoLos,      timeStart, timeEnd) <> -1) then
+				flags := flags or NO_LOS;
 			
 			m2 := InJournalBetweenTimes (Msg2, timeStart, timeEnd);
 			m4 := InJournalBetweenTimes (Msg4, timeStart, timeEnd);
@@ -488,7 +494,11 @@ begin
 			treeVisit.visitTime := GetTickCount();
 			SetLength(treeBlackList, length(treeBlackList)+1);
 			treeBlackList[length(treeBlackList)-1] := treeVisit;
+			break;
 		end;
+		
+		if (flags and NO_LOS) > 0 then
+			break;
 
 		if ((flags and NO_MORE_WOOD) > 0)
 		or (m6 <> - 1) OR (m7 <> - 1) OR (m8 <> -1)
@@ -536,9 +546,14 @@ var
 	alreadyVisited : boolean;
 	inBlacklist    : boolean;
 
-	treeList : ArrayOfTFoundTiles;
-	numTrees : index_t;
-	tree     : TFoundTile;
+	treeList    : ArrayOfTFoundTiles;
+	numTrees    : index_t;
+	tree        : TFoundTile;
+	closestTree : TFoundTile;
+	distance    : uint32;
+	distanceMin : uint32;
+	selfX       : int32;
+	selfY       : int32;
 
 	nTreesVisited : index_t;
 	treesVisited  : visited_tree_array;
@@ -572,6 +587,14 @@ begin
 		timeNow := GetTickCount();
 
 		// Look for fresh (not-already-chopped) trees to attack.
+		closestTree.x := $8000;
+		closestTree.y := $8000;
+		closestTree.z := $80;
+		closestTree.tile := 0;
+		
+		selfX := GetX(Self());
+		selfY := GetY(Self());
+
 		for idx := 0 to numTrees-1 do
 		begin
 			tree := treeList[idx];
@@ -609,7 +632,22 @@ begin
 			if inBlacklist then
 				continue;
 
-			break; // This tree's good!
+			distance := distance_chebyshev_i32(tree.x, tree.y,  selfX, selfY);
+			distanceMin := distance_chebyshev_i32(
+				closestTree.x, closestTree.y,  selfX, selfY);
+
+			//ClientPrint('DistanceNew = ' + IntToStr(distance));
+			//ClientPrint('DistanceMin = ' + IntToStr(distanceMin));
+			if distance < distanceMin then
+			begin
+				(*AddToSystemJournal(
+					'New closest tree with distance '+ IntToStr(distance)+
+					'('+ IntToStr(tree.x)+ ','+ IntToStr(tree.y)+ ') -> '+
+					'('+ IntToStr(closestTree.x)+ ','+ IntToStr(closestTree.y)+ ')');
+				*)
+
+				closestTree := tree;
+			end;
 		end;
 
 		// No new trees found. But we should have trees around, we just have
@@ -622,6 +660,7 @@ begin
 		end;
 
 		// Move to the tree and take a bunch of swings at it.
+		tree := closestTree;
 		NewMoveXY(tree.x, tree.y, false, 1, false);
 		stillGood :=
 			chop_this_tree(tree.tile, tree.x, tree.y, tree.z);
