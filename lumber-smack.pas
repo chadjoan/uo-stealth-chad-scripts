@@ -622,11 +622,9 @@ begin
 		end;
 
 		// Move to the tree and take a bunch of swings at it.
-		ClientPrint('start on new tree');
 		NewMoveXY(tree.x, tree.y, false, 1, false);
 		stillGood :=
 			chop_this_tree(tree.tile, tree.x, tree.y, tree.z);
-		ClientPrint('done with tree');
 
 		// Exception handling :p
 		if not stillGood then
